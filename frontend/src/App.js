@@ -3,7 +3,7 @@ import axios from "axios";
 import {
   ResponsiveContainer,
   RadarChart, PolarGrid, PolarAngleAxis, Radar
-} from "recharts";
+} from "recharts";// deploy fix
 
 const API = "https://intelli-credit-5x1a.onrender.com";
 
