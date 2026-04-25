@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  RadarChart, PolarGrid, PolarAngleAxis, Radar, Cell
+  ResponsiveContainer,
+  RadarChart, PolarGrid, PolarAngleAxis, Radar
 } from "recharts";
 
 const API = "https://intelli-credit-5x1a.onrender.com";
