@@ -5,7 +5,7 @@ import {
   RadarChart, PolarGrid, PolarAngleAxis, Radar, Cell
 } from "recharts";
 
-const API = "http://localhost:5000";
+const API = "https://intelli-credit-5x1a.onrender.com";
 
 /* ─── Design tokens ─────────────────────────────────────────────────────── */
 const C = {
