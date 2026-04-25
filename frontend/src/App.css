@@ -1,0 +1,92 @@
+body {
+  margin: 0;
+  background: #0b1220;
+  font-family: 'Segoe UI', sans-serif;
+  color: #e2e8f0;
+}
+
+.main-container {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+}
+
+.landing {
+  text-align: center;
+}
+
+.brand {
+  font-size: 48px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.tagline {
+  color: #94a3b8;
+  margin-bottom: 30px;
+}
+
+.upload-box {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  width: 350px;
+  margin: auto;
+}
+
+.upload-box input {
+  padding: 10px;
+  border-radius: 6px;
+  border: none;
+  background: #1e293b;
+  color: white;
+}
+
+.upload-box button {
+  padding: 12px;
+  border-radius: 6px;
+  border: none;
+  background: #2563eb;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.dashboard {
+  width: 800px;
+}
+
+.top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.decision-pill {
+  padding: 8px 16px;
+  border-radius: 20px;
+  background: #2563eb;
+}
+
+.score-section {
+  margin-top: 30px;
+  display: flex;
+  justify-content: center;
+}
+
+.meter {
+  width: 180px;
+}
+
+.chart-section {
+  margin-top: 40px;
+}
+
+.explanation-box {
+  margin-top: 30px;
+  background: #1e293b;
+  padding: 20px;
+  border-radius: 10px;
+}
