@@ -155,4 +155,70 @@ def calculate_risk(
         "five_cs": {},
         "explanation": f"Score: {total_score}/100",
         "detailed_narrative": []
+    }from services.gst_service import evaluate_gst_risk
+
+WEIGHTS = {
+    "financial_health": 40,
+    "leverage": 20,
+    "external": 20,
+    "gst": 10,
+    "qualitative": 10,
+}
+
+def calculate_risk(
+    financial_data,
+    external_penalty,
+    external_flags,
+    officer_notes=None,
+    bank_data=None,
+    mca_data=None
+):
+
+    # ✅ FIX: correct variable
+    financials = financial_data
+
+    # SAFE extraction
+    revenue = float(financials.get("revenue", 0))
+    profit = float(financials.get("profit", 0))
+    debt = float(financials.get("debt", 0))
+
+    pdf_flags = financials.get("pdf_risk_flags", [])
+
+    # simple scoring
+    fin_score = WEIGHTS["financial_health"] if profit > 0 else 20
+    lev_score = WEIGHTS["leverage"] if debt < revenue else 10
+    ext_score = WEIGHTS["external"] - external_penalty
+    gst = evaluate_gst_risk(revenue)
+    gst_score = WEIGHTS["gst"] - gst["gst_penalty"]
+    qual_score = WEIGHTS["qualitative"]
+
+    total = max(min(fin_score + lev_score + ext_score + gst_score + qual_score, 100), 0)
+
+    if total >= 70:
+        decision = "Approve"
+        rate = "10%"
+    elif total >= 50:
+        decision = "Conditional"
+        rate = "12%"
+    else:
+        decision = "Reject"
+        rate = "N/A"
+
+    return {
+        "risk_score": total,
+        "decision": decision,
+        "interest_rate": rate,
+        "loan_amount": "₹1 Cr",
+        "risk_flags": pdf_flags + external_flags,
+        "score_breakdown": {
+            "financial_score": fin_score,
+            "leverage_score": lev_score,
+            "external_score": ext_score,
+            "gst_score": gst_score,
+            "qualitative_score": qual_score,
+        },
+        "gst_analysis": gst,
+        "five_cs": {},
+        "explanation": f"Score {total}/100",
+        "detailed_narrative": []
     }
