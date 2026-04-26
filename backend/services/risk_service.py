@@ -200,11 +200,13 @@ def _build_five_cs(
 
 
 def calculate_risk(
-    financials: dict,
-    external_penalty: int = 0,
-    external_flags: list | None = None,
-    officer_notes: str | None = None
-) -> dict:
+    financial_data,
+    external_penalty,
+    external_flags,
+    officer_notes=None,
+    bank_data=None,
+    mca_data=None
+ ):
 
     pdf_flags = financials.get("pdf_risk_flags", [])
 
