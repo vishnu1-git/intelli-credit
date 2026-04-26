@@ -155,7 +155,7 @@ def calculate_risk(
         "five_cs": {},
         "explanation": f"Score: {total_score}/100",
         "detailed_narrative": []
-    }from services.gst_service import evaluate_gst_risk
+    from services.gst_service import evaluate_gst_risk
 
 WEIGHTS = {
     "financial_health": 40,
