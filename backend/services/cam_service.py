@@ -103,7 +103,7 @@ def _build_styles():
     return styles
 
 
-def generate_cam(company: str, financials: dict, research: dict, analysis: dict) -> str:
+def generate_cam(company: str, financials: dict, research: dict, analysis: dict, bank_data: dict | None = None, mca_data: dict | None = None) -> str:
     os.makedirs("uploads", exist_ok=True)
 
     safe_name = "".join(c for c in company.strip() if c.isalnum() or c in " _-").strip()
