@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import {
-  ResponsiveContainer,
-  RadarChart, PolarGrid, PolarAngleAxis, Radar
-} from "recharts";// deploy fix
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  RadarChart, PolarGrid, PolarAngleAxis, Radar, Cell
+} from "recharts";
 
-const API = "https://intelli-credit-5x1a.onrender.com";
+const API = "http://localhost:5000";
 
 /* ─── Design tokens ─────────────────────────────────────────────────────── */
 const C = {
