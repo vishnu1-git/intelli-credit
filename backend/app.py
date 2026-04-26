@@ -24,7 +24,7 @@ DB_PATH       = os.path.join(BASE_DIR, "intelli_credit.db")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {"pdf"}
-MAX_FILE_MB        = 20
+MAX_FILE_MB        = 5
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
