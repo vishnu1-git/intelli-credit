@@ -3,3 +3,5 @@ flask-cors==4.0.1
 pdfplumber==0.11.4
 reportlab==4.2.2
 gunicorn
+numpy
+scikit-learn
