@@ -9,6 +9,7 @@ Components:
 """
 
 from services.gst_service import evaluate_gst_risk
+from services.ml_scoring_service import ml_credit_score
 
 WEIGHTS = {
     "financial":   40,
@@ -244,7 +245,23 @@ def calculate_risk(
             "detailed_narrative": ["Could not parse financials from the document."],
         }
 
+    # ✅ Correct indentation starts here
     gst = evaluate_gst_risk(revenue)
+
+    # ── ML Scoring Integration ──
+    ml_result = ml_credit_score(
+        financials={
+            "revenue": revenue,
+            "profit": profit,
+            "debt": debt,
+            "pdf_risk_flags": pdf_flags
+        },
+        gst=gst,
+        research={
+            "external_penalty": external_penalty
+        },
+        bank_data=bank_data
+    )
 
     fin_score,  fin_flags,  fin_narr  = _score_financial(revenue, profit)
     lev_score,  lev_flags,  lev_narr  = _score_leverage(revenue, debt)
@@ -259,7 +276,10 @@ def calculate_risk(
     all_flags = fin_flags + lev_flags + ext_flags + qual_flags
     all_narr  = fin_narr  + lev_narr  + ext_narr  + qual_narr
 
-    total = round(min(fin_score + lev_score + ext_score + gst_score + qual_score, 100), 1)
+    base_score = fin_score + lev_score + ext_score + gst_score + qual_score
+    ml_adjustment = ml_result.get("ml_score_adjustment", 0)
+
+    total = round(min(max(base_score + ml_adjustment, 0), 100), 1)
 
     # Decision
     if total >= 80:
@@ -295,6 +315,7 @@ def calculate_risk(
         "decision":      decision,
         "interest_rate": rate,
         "loan_amount":   loan,
+        "ml_analysis":   ml_result,
         "risk_flags":    all_flags,
         "score_breakdown": {
             "financial_score":   fin_score,
