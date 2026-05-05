@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from services.pdf_service      import extract_financials
-from services.risk_service     import calculate_risk
+from services.risk_service     import calculate_risk_with_ml as calculate_risk
 from services.research_service import analyze_company_news
 from services.cam_service      import generate_cam
 from services.bank_service     import analyze_bank_statement
@@ -24,7 +24,7 @@ DB_PATH       = os.path.join(BASE_DIR, "intelli_credit.db")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {"pdf"}
-MAX_FILE_MB        = 25          # ← was 5, real annual reports are 8-20 MB
+MAX_FILE_MB        = 25
 
 # ── DB ────────────────────────────────────────────────────────────────────────
 
@@ -133,6 +133,9 @@ def analyze():
     company_name = (request.form.get("company_name") or "").strip()
     bank_file    = request.files.get("bank_file")
 
+    # ✅ NEW: optional second PDF support
+    file2 = request.files.get("file2")
+
     if not file.filename:
         return jsonify({"error": "No file selected."}), 400
     if not allowed_file(file.filename):
@@ -147,7 +150,28 @@ def analyze():
         return jsonify({"error": f"File too large ({size_mb:.1f} MB). Max {MAX_FILE_MB} MB."}), 400
 
     try:
-        financial_data = extract_financials(file)
+        # ✅ NEW: multi-PDF extraction + merge
+        f1 = extract_financials(file)
+
+        if file2 and file2.filename and allowed_file(file2.filename):
+            f2 = extract_financials(file2)
+
+            financial_data = {
+                "revenue": str(max(float(f1.get("revenue", 0)), float(f2.get("revenue", 0)))),
+                "profit":  str(max(float(f1.get("profit", 0)),  float(f2.get("profit", 0)))),
+                "debt":    str(max(float(f1.get("debt", 0)),    float(f2.get("debt", 0)))),
+                "pdf_risk_flags": list(set(f1.get("pdf_risk_flags", []) + f2.get("pdf_risk_flags", []))),
+                "extraction_method": "multi_pdf"
+            }
+
+            # display fields
+            from services.pdf_service import fmt_inr
+            financial_data["revenue_display"] = fmt_inr(float(financial_data["revenue"]))
+            financial_data["profit_display"]  = fmt_inr(float(financial_data["profit"]))
+            financial_data["debt_display"]    = fmt_inr(float(financial_data["debt"]))
+        else:
+            financial_data = f1
+
         research_data  = analyze_company_news(company_name)
 
         bank_data = None
@@ -166,10 +190,12 @@ def analyze():
             bank_data        = bank_data,
             mca_data         = mca_data,
         )
+
         cam_filename = generate_cam(
             company_name, financial_data, research_data, risk_result,
             bank_data=bank_data, mca_data=mca_data
         )
+
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
@@ -184,10 +210,12 @@ def analyze():
         "mca":        mca_data,
         "cam_report": cam_filename,
     }
+
     try:
         result["record_id"] = save_analysis(user_id, company_name, result)
     except Exception:
         pass
+
     return jsonify(result)
 
 # ── History ───────────────────────────────────────────────────────────────────
@@ -238,3 +266,13 @@ def health():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
+# ── ML model info endpoint ────────────────────────────────────────────────────
+
+@app.route("/model-info", methods=["GET"])
+def model_info():
+    try:
+        from services.ml_scoring_service import get_model_metadata
+        return jsonify(get_model_metadata())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

@@ -9,7 +9,6 @@ Components:
 """
 
 from services.gst_service import evaluate_gst_risk
-from services.ml_scoring_service import ml_credit_score
 
 WEIGHTS = {
     "financial":   40,
@@ -245,23 +244,7 @@ def calculate_risk(
             "detailed_narrative": ["Could not parse financials from the document."],
         }
 
-    # ✅ Correct indentation starts here
     gst = evaluate_gst_risk(revenue)
-
-    # ── ML Scoring Integration ──
-    ml_result = ml_credit_score(
-        financials={
-            "revenue": revenue,
-            "profit": profit,
-            "debt": debt,
-            "pdf_risk_flags": pdf_flags
-        },
-        gst=gst,
-        research={
-            "external_penalty": external_penalty
-        },
-        bank_data=bank_data
-    )
 
     fin_score,  fin_flags,  fin_narr  = _score_financial(revenue, profit)
     lev_score,  lev_flags,  lev_narr  = _score_leverage(revenue, debt)
@@ -276,10 +259,7 @@ def calculate_risk(
     all_flags = fin_flags + lev_flags + ext_flags + qual_flags
     all_narr  = fin_narr  + lev_narr  + ext_narr  + qual_narr
 
-    base_score = fin_score + lev_score + ext_score + gst_score + qual_score
-    ml_adjustment = ml_result.get("ml_score_adjustment", 0)
-
-    total = round(min(max(base_score + ml_adjustment, 0), 100), 1)
+    total = round(min(fin_score + lev_score + ext_score + gst_score + qual_score, 100), 1)
 
     # Decision
     if total >= 80:
@@ -315,7 +295,6 @@ def calculate_risk(
         "decision":      decision,
         "interest_rate": rate,
         "loan_amount":   loan,
-        "ml_analysis":   ml_result,
         "risk_flags":    all_flags,
         "score_breakdown": {
             "financial_score":   fin_score,
@@ -329,3 +308,61 @@ def calculate_risk(
         "explanation":       explanation,
         "detailed_narrative": all_narr,
     }
+
+
+# ── ML-enhanced wrapper ────────────────────────────────────────────────────────
+
+def calculate_risk_with_ml(
+    financials:       dict,
+    external_penalty: int  = 0,
+    external_flags:   list = None,
+    officer_notes:    str  = None,
+    bank_data:        dict = None,
+    mca_data:         dict = None,
+) -> dict:
+    """
+    Calls calculate_risk then augments with ML model prediction.
+    The ML score adjustment is applied on top of the rule-based score.
+    """
+    result = calculate_risk(
+        financials, external_penalty, external_flags,
+        officer_notes, bank_data, mca_data
+    )
+
+    try:
+        from services.ml_scoring_service import ml_credit_score
+        ml = ml_credit_score(
+            financials, result["gst_analysis"],
+            {"external_penalty": external_penalty, "external_flags": external_flags or []},
+            bank_data,
+        )
+        adj = ml.get("ml_score_adjustment", 0)
+        result["risk_score"] = round(
+            min(max(result["risk_score"] + adj, 0), 100), 1)
+        result["ml_analysis"] = ml
+
+        # Update decision based on adjusted score
+        s = result["risk_score"]
+        if s >= 80:
+            result["decision"]      = "Approve"
+            result["interest_rate"] = "9.5% p.a."
+        elif s >= 70:
+            result["decision"]      = "Approve with Conditions"
+            result["interest_rate"] = "11.5% p.a."
+        elif s >= 60:
+            result["decision"]      = "Approve with Strict Conditions"
+            result["interest_rate"] = "13.5% p.a."
+        else:
+            result["decision"]      = "Reject"
+            result["interest_rate"] = "N/A"
+
+        result["explanation"] = (
+            result["explanation"] +
+            f" ML model: {ml['ml_grade']} "
+            f"(reject probability {ml['ml_reject_probability']:.0%}, "
+            f"score adjustment {adj:+d} pts)."
+        )
+    except Exception:
+        result["ml_analysis"] = {"error": "ML model unavailable"}
+
+    return result

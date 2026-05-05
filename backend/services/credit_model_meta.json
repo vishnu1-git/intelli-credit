@@ -1,0 +1,25 @@
+{
+  "accuracy": 0.925,
+  "auc_roc": 0.9656,
+  "cv_auc_mean": 0.9575,
+  "cv_auc_std": 0.0121,
+  "precision_0": 0.9379,
+  "recall_0": 0.9765,
+  "precision_1": 0.8261,
+  "recall_1": 0.6333,
+  "feature_names": [
+    "profit_margin_pct",
+    "debt_to_revenue_ratio",
+    "log_revenue_cr",
+    "gst_mismatch_pct",
+    "news_penalty_score",
+    "bank_bounce_count",
+    "bank_inflow_ratio",
+    "has_litigation_flag",
+    "has_auditor_qualification",
+    "od_utilisation_pct"
+  ],
+  "n_training": 2000,
+  "model_type": "GradientBoostingClassifier",
+  "trained_at": "2026-05-04T13:04:56.273687"
+}
