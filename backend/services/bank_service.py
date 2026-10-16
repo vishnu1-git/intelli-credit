@@ -66,8 +66,18 @@ def _extract_with_patterns(text: str, patterns: list) -> float:
 
 def _count_occurrences(text: str, patterns: list) -> int:
     count = 0
-    for pattern in patterns:
-        count += len(re.findall(pattern, text, re.IGNORECASE))
+    # Exclude fee schedules and policy disclaimers
+    disclaimer_words = [
+        "charges", "charge", "fees", "fee", "tariff", "applicable",
+        "penalty", "penal", "schedule", "terms", "condition", "rate of",
+        "per return", "unpaid return charges"
+    ]
+    for line in text.splitlines():
+        line_lower = line.lower()
+        if any(dw in line_lower for dw in disclaimer_words):
+            continue
+        for pattern in patterns:
+            count += len(re.findall(pattern, line, re.IGNORECASE))
     return count
 
 
@@ -224,37 +234,54 @@ def analyze_bank_statement(bank_file) -> dict:
     else:
         avg_monthly_balance = (opening_balance + closing_balance) / 2 if opening_balance else closing_balance
 
-    # Inflow-outflow ratio
-    if total_debits > 0:
+    # Inflow-outflow ratio calculation and transaction verification
+    has_txn_data = (txn_count > 0) or (total_credits > 0 or total_debits > 0)
+
+    if not has_txn_data:
+        inflow_outflow_ratio = 0.0
+        inflow_outflow_display = "N/A (Zero transactions parsed)"
+    elif total_debits > 0:
         inflow_outflow_ratio = round(total_credits / total_debits, 2)
+        inflow_outflow_display = f"{inflow_outflow_ratio:.2f}x"
+    elif total_credits > 0 and total_debits == 0:
+        inflow_outflow_ratio = 1.0
+        inflow_outflow_display = "1.00x (Inflows recorded with zero debits)"
     else:
-        inflow_outflow_ratio = 99.0
+        inflow_outflow_ratio = 0.0
+        inflow_outflow_display = "0.00x"
 
     # Utilisation vs OD limit
     od_utilisation_pct = 0.0
     if od_limit > 0 and closing_balance < 0:
         od_utilisation_pct = round(abs(closing_balance) / od_limit * 100, 1)
 
-    # Flags
+    # Flags & penalties
     flags = []
     bank_score_penalty = 0
 
-    if bounce_count >= 3:
-        flags.append(f"High bounce/return count ({bounce_count} occurrences) — poor payment discipline")
-        bank_score_penalty += 15
-    elif bounce_count >= 1:
-        flags.append(f"Cheque/ECS returns detected ({bounce_count} occurrences)")
-        bank_score_penalty += 7
+    if not has_txn_data:
+        # Do NOT apply bounce penalties if no actual transaction rows were parsed
+        bounce_count = 0
+        flags.append("⚠ Bank Statement Notice: Zero debit/credit transactions extracted. Document may be scanned, image-based, or non-standard format. Manual statement audit required.")
+        extraction_status = "INCOMPLETE"
+    else:
+        extraction_status = "VERIFIED"
+        if bounce_count >= 3:
+            flags.append(f"High bounce/return count ({bounce_count} occurrences) — poor payment discipline")
+            bank_score_penalty += 15
+        elif bounce_count >= 1:
+            flags.append(f"Cheque/ECS returns detected ({bounce_count} occurrences)")
+            bank_score_penalty += 7
 
-    if inflow_outflow_ratio < 0.8:
-        flags.append(f"Outflows exceed inflows (ratio {inflow_outflow_ratio}x) — cash drain")
-        bank_score_penalty += 10
-    elif inflow_outflow_ratio < 1.0:
-        flags.append(f"Near-breakeven cashflow (ratio {inflow_outflow_ratio}x)")
-        bank_score_penalty += 5
+        if inflow_outflow_ratio < 0.8:
+            flags.append(f"Outflows exceed inflows (ratio {inflow_outflow_ratio}x) — cash drain")
+            bank_score_penalty += 10
+        elif inflow_outflow_ratio < 1.0:
+            flags.append(f"Near-breakeven cashflow (ratio {inflow_outflow_ratio}x)")
+            bank_score_penalty += 5
 
     if closing_balance < 0:
-        flags.append(f"Negative closing balance — overdraft position")
+        flags.append("Negative closing balance — overdraft position")
         bank_score_penalty += 12
 
     if od_utilisation_pct > 90:
@@ -268,13 +295,13 @@ def analyze_bank_statement(bank_file) -> dict:
         flags.append(f"{len(large_credits)} unusually large credit entries (>₹10L) — verify source")
         bank_score_penalty += 5
 
-    # Positive signals
+    # Positive signals (only valid when genuine transaction data exists)
     positive = []
-    if inflow_outflow_ratio >= 1.3:
+    if has_txn_data and inflow_outflow_ratio >= 1.3:
         positive.append(f"Healthy cashflow surplus (ratio {inflow_outflow_ratio}x)")
-    if avg_monthly_balance > 500_000:
+    if has_txn_data and avg_monthly_balance > 500_000:
         positive.append(f"Strong average monthly balance (₹{avg_monthly_balance/1e5:.1f}L)")
-    if bounce_count == 0:
+    if has_txn_data and bounce_count == 0:
         positive.append("No cheque/ECS returns — clean payment record")
     if emi_count > 0:
         positive.append(f"Existing loan repayments active ({emi_count} EMI entries)")
@@ -294,11 +321,14 @@ def analyze_bank_statement(bank_file) -> dict:
         "total_credits":         total_credits,
         "total_debits":          total_debits,
         "inflow_outflow_ratio":  inflow_outflow_ratio,
+        "inflow_outflow_display": inflow_outflow_display,
         "od_limit":              od_limit,
         "od_utilisation_pct":    od_utilisation_pct,
         "bounce_count":          bounce_count,
         "emi_count":             emi_count,
         "transaction_count":     txn_count,
+        "has_txn_data":          has_txn_data,
+        "extraction_status":     extraction_status,
         "monthly_breakdown":     monthly,
         "bank_flags":            flags,
         "bank_positive":         positive,
@@ -307,6 +337,7 @@ def analyze_bank_statement(bank_file) -> dict:
         "large_debit_count":     len(large_debits),
         # Display strings
         "opening_balance_display":     fmt(opening_balance),
+
         "closing_balance_display":     fmt(closing_balance),
         "avg_monthly_balance_display": fmt(avg_monthly_balance),
         "total_credits_display":       fmt(total_credits),

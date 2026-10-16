@@ -755,7 +755,16 @@ function Dashboard({ result, onBack }) {
   const gst = analysis.gst_analysis || {};
   const ml = analysis.ml_analysis || {};
   const score = analysis.risk_score || 0;
-  const dColor = decisionColor(analysis.decision);
+  const baseScore = analysis.base_score || breakdown.base_score || Math.round(
+    (breakdown.financial_score || 0) +
+    (breakdown.leverage_score || 0) +
+    (breakdown.external_score || 0) +
+    (breakdown.gst_score || 0) +
+    (breakdown.qualitative_score || 0)
+  ) || score;
+  const finalScore = analysis.final_score || analysis.risk_score || score;
+  const mlAdj = breakdown.ml_adjustment !== undefined ? breakdown.ml_adjustment : (finalScore - baseScore);
+  const covenants = analysis.sanction_covenants || [];
 
   const breakdownData = [
     { name: "Financial", value: breakdown.financial_score || 0, max: 40 },
@@ -764,6 +773,7 @@ function Dashboard({ result, onBack }) {
     { name: "GST",       value: breakdown.gst_score || 0,       max: 10 },
     { name: "Officer",   value: breakdown.qualitative_score || 0, max: 10 },
   ];
+
 
   const TABS = [
     { id: "overview",    label: "Overview" },
@@ -887,7 +897,15 @@ function Dashboard({ result, onBack }) {
             padding: "22px 28px",
           }}
         >
-          <ScoreRing score={score} />
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+            <ScoreRing score={finalScore} />
+            <div style={{ textAlign: "center", fontSize: 11, color: C.muted, fontWeight: 600 }}>
+              Base: <span style={{ color: C.text }}>{baseScore}</span> · ML:{" "}
+              <span style={{ color: mlAdj >= 0 ? C.green : C.amber }}>
+                {mlAdj >= 0 ? `+${mlAdj}` : mlAdj} pts
+              </span>
+            </div>
+          </div>
 
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
@@ -927,6 +945,31 @@ function Dashboard({ result, onBack }) {
           </Card>
         </div>
 
+        {/* Mandatory Sanction Covenants & Integrity Conditions Banner */}
+        {covenants.length > 0 && (
+          <div
+            style={{
+              background: C.amber + "12",
+              border: `1px solid ${C.amber}44`,
+              borderRadius: 12,
+              padding: "16px 20px",
+              marginBottom: 22,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 16 }}>⚠️</span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: C.amber, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Mandatory Sanction Covenants & Verification Conditions
+              </span>
+            </div>
+            {covenants.map((cov, idx) => (
+              <p key={idx} style={{ fontSize: 12, color: C.text, margin: "4px 0 0 24px", lineHeight: 1.5 }}>
+                • <b>[COVENANT]</b> {cov}
+              </p>
+            ))}
+          </div>
+        )}
+
         {/* 4 Financial KPI Cards */}
         <div
           style={{
@@ -957,9 +1000,9 @@ function Dashboard({ result, onBack }) {
             },
             {
               label: "GST Filing Status",
-              val: gst.gst_risk_level || "Compliant",
-              color: (gst.gst_penalty || 0) === 0 ? C.green : C.amber,
-              sub: `Variance: ${gst.gst_mismatch_percent || 0}%`,
+              val: gst.gst_risk_level || (gst.gst_verified ? "GST Compliant" : "Pending Verification"),
+              color: gst.gst_verified ? C.green : C.amber,
+              sub: gst.gst_verified ? `Variance: ${gst.gst_mismatch_display || "0%"}` : "GSTR Not Uploaded (0 pts penalty)",
             },
           ].map(({ label, val, color, sub }) => (
             <Card key={label}>
@@ -1011,6 +1054,24 @@ function Dashboard({ result, onBack }) {
                   </div>
                 );
               })}
+
+              <div
+                style={{
+                  marginTop: 14,
+                  paddingTop: 12,
+                  borderTop: `1px solid ${C.border}`,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontSize: 11,
+                  background: C.surface,
+                  padding: "8px 12px",
+                  borderRadius: 6,
+                }}
+              >
+                <span>Base Subtotal: <b style={{ color: C.text }}>{baseScore}/100</b></span>
+                <span>ML Overlay: <b style={{ color: mlAdj >= 0 ? C.green : C.amber }}>{mlAdj >= 0 ? `+${mlAdj}` : mlAdj} pts</b></span>
+                <span>Final Score: <b style={{ color: C.accent }}>{finalScore}/100</b></span>
+              </div>
             </div>
           </Card>
 
@@ -1287,6 +1348,23 @@ function Dashboard({ result, onBack }) {
               </Card>
             ) : (
               <>
+                {!bank.has_txn_data && (
+                  <div
+                    style={{
+                      background: C.amber + "15",
+                      border: `1px solid ${C.amber}44`,
+                      borderRadius: 10,
+                      padding: "12px 18px",
+                      marginBottom: 16,
+                    }}
+                  >
+                    <b style={{ color: C.amber, fontSize: 13 }}>⚠️ Bank Statement Extraction Incomplete</b>
+                    <p style={{ color: C.text, fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>
+                      Zero debit/credit transactions could be extracted from this statement document. Cash flow velocity has been set to neutral (0.0x) and false bounce penalties have been suppressed. Complete manual audit of original statements is required.
+                    </p>
+                  </div>
+                )}
+
                 <div
                   style={{
                     display: "grid",
@@ -1297,8 +1375,8 @@ function Dashboard({ result, onBack }) {
                 >
                   {[
                     { label: "Avg Monthly Balance", val: bank.avg_monthly_balance_display, color: C.text },
-                    { label: "Inflow / Outflow Ratio", val: `${bank.inflow_outflow_ratio}x`, color: bank.inflow_outflow_ratio >= 1.2 ? C.green : C.amber },
-                    { label: "Cheque / ECS Bounces", val: bank.bounce_count, color: bank.bounce_count === 0 ? C.green : bank.bounce_count <= 2 ? C.amber : C.red },
+                    { label: "Inflow / Outflow Ratio", val: bank.inflow_outflow_display || (bank.has_txn_data ? `${bank.inflow_outflow_ratio}x` : "N/A"), color: bank.has_txn_data && bank.inflow_outflow_ratio >= 1.2 ? C.green : C.amber },
+                    { label: "Cheque / ECS Bounces", val: bank.has_txn_data ? bank.bounce_count : "0 (Unparsed)", color: bank.bounce_count === 0 ? C.green : bank.bounce_count <= 2 ? C.amber : C.red },
                     { label: "Total Bank Credits", val: bank.total_credits_display, color: C.green },
                     { label: "Total Bank Debits", val: bank.total_debits_display, color: C.red },
                     { label: "OD Limit Utilisation", val: `${bank.od_utilisation_pct}%`, color: bank.od_utilisation_pct > 70 ? C.red : C.green },

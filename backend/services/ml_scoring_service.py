@@ -182,11 +182,15 @@ def build_features(
     has_auditor_qual = float(any("auditor" in f.lower() or "going concern" in f.lower() for f in pdf_flags))
 
     bounce_count = 0.0
-    inflow_ratio = 1.15
+    inflow_ratio = 1.0
     od_utilisation = 0.0
     if bank_data and not bank_data.get("error"):
-        bounce_count   = float(bank_data.get("bounce_count", 0))
-        inflow_ratio   = float(bank_data.get("inflow_outflow_ratio", 1.15))
+        if bank_data.get("has_txn_data", False):
+            bounce_count   = float(bank_data.get("bounce_count", 0))
+            inflow_ratio   = float(bank_data.get("inflow_outflow_ratio", 1.0))
+        else:
+            bounce_count   = 0.0
+            inflow_ratio   = 1.0
         od_utilisation = float(bank_data.get("od_utilisation_pct", 0))
 
     return np.array([[

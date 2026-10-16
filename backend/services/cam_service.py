@@ -55,20 +55,24 @@ def _ts(rows, hc=None):
     return TableStyle(st)
 
 def generate_cam(company, financials, research, analysis, bank_data=None, mca_data=None):
-    os.makedirs("uploads", exist_ok=True)
+    upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
     safe = "".join(c for c in company.strip() if c.isalnum() or c in " _-").strip()
-    fp = os.path.join("uploads", f"{safe}_CAM_Report.pdf")
+    fp = os.path.join(upload_dir, f"{safe}_CAM_Report.pdf")
     doc = SimpleDocTemplate(fp, leftMargin=0.75*inch, rightMargin=0.75*inch,
                             topMargin=0.75*inch, bottomMargin=0.75*inch)
     s = _s()
     E = []
     now = datetime.now().strftime("%d %b %Y, %I:%M %p")
-    score = analysis.get("risk_score", 0)
+    score = analysis.get("final_score", analysis.get("risk_score", 0))
+    base_score = analysis.get("base_score", score)
     bd = analysis.get("score_breakdown", {})
     fc = analysis.get("five_cs", {})
     gst = analysis.get("gst_analysis", {})
     ml = analysis.get("ml_analysis", {})
     dc = _dc(analysis.get("decision", ""))
+    ml_adj = ml.get("ml_score_adjustment", 0) if ml else 0
+    covenants = analysis.get("sanction_covenants", [])
 
     # ── Header ────────────────────────────────────────────────────────────────
     hdr = Table([[
@@ -84,9 +88,9 @@ def generate_cam(company, financials, research, analysis, bank_data=None, mca_da
 
     # ── Score card ────────────────────────────────────────────────────────────
     sc_data = [
-        ["Credit Score", "Decision", "Loan Amount", "Interest Rate"],
+        ["Final Calibrated Score", "Decision", "Indicative Loan Limit", "Interest Rate"],
         [
-            Paragraph(f"<font size='20' color='#0f1f3d'><b>{score}</b></font><font size='9'>/100</font>", s["body"]),
+            Paragraph(f"<font size='18' color='#0f1f3d'><b>{score}</b></font><font size='8'>/100</font><br/><font size='7' color='#6b7280'>Base: {base_score} | ML: {ml_adj:+d}</font>", s["body"]),
             Paragraph(f"<b>{analysis.get('decision','N/A')}</b>", s["body"]),
             Paragraph(f"<b>{analysis.get('loan_amount','N/A')}</b>", s["body"]),
             Paragraph(f"<b>{analysis.get('interest_rate','N/A')}</b>", s["body"]),
@@ -98,7 +102,7 @@ def generate_cam(company, financials, research, analysis, bank_data=None, mca_da
         ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,0),9),
         ("BACKGROUND",(0,1),(-1,1),LGRAY),("GRID",(0,0),(-1,-1),0.5,MGRAY),
         ("ALIGN",(0,0),(-1,-1),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
-        ("TOPPADDING",(0,0),(-1,-1),10),("BOTTOMPADDING",(0,0),(-1,-1),10),
+        ("TOPPADDING",(0,0),(-1,-1),8),("BOTTOMPADDING",(0,0),(-1,-1),8),
         ("TEXTCOLOR",(1,1),(1,1),dc),
     ]))
     E.append(sc); E.append(Spacer(1, 0.1*inch))
@@ -106,12 +110,12 @@ def generate_cam(company, financials, research, analysis, bank_data=None, mca_da
     # ── ML row ────────────────────────────────────────────────────────────────
     if ml and not ml.get("error") and ml.get("ml_grade"):
         ml_data = [
-            ["XGBoost Grade (97.92% Acc)", "Reject Probability", "ML Decision", "Score Adjustment"],
+            ["XGBoost Risk Grade", "Reject Probability", "ML Model Prediction", "Overlay Adjustment"],
             [
                 Paragraph(f"<b>{ml.get('ml_grade','N/A')}</b>", s["body"]),
                 Paragraph(f"<b>{ml.get('ml_reject_probability',0)*100:.1f}%</b>", s["body"]),
                 Paragraph(f"<b>{ml.get('ml_prediction','N/A')}</b>", s["body"]),
-                Paragraph(f"<b>{ml.get('ml_score_adjustment',0):+d} pts</b>", s["body"]),
+                Paragraph(f"<b>{ml_adj:+d} pts</b>", s["body"]),
             ]
         ]
         mt = Table(ml_data, colWidths=[1.75*inch]*4)
@@ -130,31 +134,47 @@ def generate_cam(company, financials, research, analysis, bank_data=None, mca_da
     E.append(Paragraph("1. Executive Summary", s["h2"]))
     E.append(Paragraph(analysis.get("explanation","N/A"), s["body"]))
 
-    # ── 2. Score Breakdown ────────────────────────────────────────────────────
-    E.append(Paragraph("2. Score Breakdown", s["h2"]))
+    # ── 2. Score Breakdown & Reconciliation ───────────────────────────────────
+    E.append(Paragraph("2. Score Breakdown & Reconciliation", s["h2"]))
     bd_items = [
         ("Financial Health", "financial_score",   40),
-        ("Leverage",         "leverage_score",    20),
-        ("External Intel",   "external_score",    20),
+        ("Capital & Leverage", "leverage_score",  20),
+        ("External Intelligence", "external_score", 20),
         ("GST Compliance",   "gst_score",         10),
-        ("Qualitative",      "qualitative_score", 10),
+        ("Qualitative / Notes", "qualitative_score", 10),
     ]
-    bdr = [["Component", "Score", "Max", "Status"]]
+    bdr = [["Component", "Score", "Max", "Rating / Impact"]]
     for lbl, k, mx in bd_items:
         v = bd.get(k, 0)
-        bdr.append([lbl, str(v), str(mx), "Good" if v/mx>=0.75 else ("Fair" if v/mx>=0.5 else "Weak")])
+        bdr.append([lbl, str(v), str(mx), "Strong" if v/mx>=0.75 else ("Adequate" if v/mx>=0.5 else "Stressed")])
+
+    # Add Subtotal and ML calibration reconciliation rows
+    bdr.append(["Base Underwriting Subtotal", str(base_score), "100", "Composite Baseline"])
+    bdr.append(["XGBoost ML Risk Overlay", f"{ml_adj:+d} pts", "—", "Grade: " + (ml.get("ml_grade","N/A") if ml else "N/A")])
+    bdr.append(["Final Calibrated Credit Score", str(score), "100", f"Decision: {analysis.get('decision','N/A')}"])
+
     bdt = Table(bdr, colWidths=[2.8*inch, 1.2*inch, 1.0*inch, 1.6*inch])
     bds = [
         ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
         ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,0),9),
         ("FONTSIZE",(0,1),(-1,-1),9),("GRID",(0,0),(-1,-1),0.5,MGRAY),
         ("ALIGN",(1,0),(-1,-1),"CENTER"),
-        ("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6),("LEFTPADDING",(0,0),(-1,-1),8),
+        ("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5),("LEFTPADDING",(0,0),(-1,-1),8),
+        # Highlight Base Subtotal row
+        ("BACKGROUND",(0,6),(-1,6),colors.HexColor("#f1f5f9")),
+        ("FONTNAME",(0,6),(-1,6),"Helvetica-Bold"),
+        # Highlight ML Overlay row
+        ("BACKGROUND",(0,7),(-1,7),colors.HexColor("#faf5ff")),
+        ("TEXTCOLOR",(0,7),(-1,7),PURPLE),
+        ("FONTNAME",(0,7),(-1,7),"Helvetica-Bold"),
+        # Highlight Final Calibrated Score row
+        ("BACKGROUND",(0,8),(-1,8),LTEAL),
+        ("FONTNAME",(0,8),(-1,8),"Helvetica-Bold"),
     ]
     for i, (_, k, mx) in enumerate(bd_items, 1):
         v = bd.get(k, 0)
         c = GREEN if v/mx>=0.75 else (AMBER if v/mx>=0.5 else RED)
-        bds += [("TEXTCOLOR",(1,i),(1,i),c),("FONTNAME",(1,i),(1,i),"Helvetica-Bold"),("TEXTCOLOR",(3,i),(3,i),c)]
+        bds += [("TEXTCOLOR",(1,i),(1,i),c),("FONTNAME",(1,i),(1,i),"Helvetica-Bold")]
         if i % 2 == 0:
             bds.append(("BACKGROUND",(0,i),(-1,i),LGRAY))
     bdt.setStyle(TableStyle(bds))
@@ -178,11 +198,11 @@ def generate_cam(company, financials, research, analysis, bank_data=None, mca_da
     E.append(Paragraph("4. GST Compliance Assessment", s["h2"]))
     gst_data = [
         ["Field", "Value"],
-        ["Declared Revenue",    financials.get("revenue_display","N/A")],
-        ["Est. GST Turnover",   gst.get("gst_turnover_display","N/A")],
-        ["Mismatch %",          f"{gst.get('gst_mismatch_percent',0):.2f}%"],
-        ["Risk Level",          gst.get("gst_risk_level","N/A")],
-        ["Penalty Applied",     f"{gst.get('gst_penalty',0)} pts"],
+        ["Declared P&L Revenue", financials.get("revenue_display","N/A")],
+        ["Verified GST Turnover", gst.get("gst_turnover_display","Pending Submission")],
+        ["Turnover Mismatch %",  gst.get("gst_mismatch_display", "N/A (Unverified)")],
+        ["Compliance Risk Tier", gst.get("gst_risk_level","Pending Verification")],
+        ["Score Penalty",        f"{gst.get('gst_penalty',0)} pts"],
     ]
     gt = Table(gst_data, colWidths=[2.8*inch, 3.8*inch])
     gt.setStyle(_ts(len(gst_data), TEAL))
@@ -193,13 +213,13 @@ def generate_cam(company, financials, research, analysis, bank_data=None, mca_da
     E.append(Paragraph("5. External Intelligence Review", s["h2"]))
     E.append(Paragraph(
         f"<b>Sentiment:</b> {research.get('overall_sentiment','Neutral')}  |  "
-        f"<b>Articles:</b> {research.get('articles_analyzed',0)}  |  "
+        f"<b>Verified Articles Analyzed:</b> {research.get('articles_analyzed',0)}  |  "
         f"<b>Penalty:</b> {research.get('external_penalty',0)} pts", s["body"]))
     xf = [f for f in analysis.get("risk_flags",[]) if f.startswith("[")]
     if xf:
         for f in xf: E.append(Paragraph(f"⚠  {f}", s["flag"]))
     else:
-        E.append(Paragraph("✓  No major adverse external signals detected.", s["pos"]))
+        E.append(Paragraph("✓  No verified adverse news or regulatory actions detected for borrower.", s["pos"]))
     for p in research.get("positive_signals",[]): E.append(Paragraph(f"✓  {p}", s["pos"]))
 
     # ── 6. Five Cs ────────────────────────────────────────────────────────────
@@ -220,14 +240,16 @@ def generate_cam(company, financials, research, analysis, bank_data=None, mca_da
     # ── 7. Bank Statement ─────────────────────────────────────────────────────
     E.append(Paragraph("7. Bank Statement Analysis", s["h2"]))
     if bank_data and not bank_data.get("error"):
+        has_txns = bank_data.get("has_txn_data", False)
         bk_data = [
             ["Metric", "Value"],
+            ["Extraction Status",      "Verified Data" if has_txns else "Incomplete (0 txns parsed)"],
             ["Opening Balance",        bank_data.get("opening_balance_display","N/A")],
             ["Closing Balance",         bank_data.get("closing_balance_display","N/A")],
             ["Avg Monthly Balance",     bank_data.get("avg_monthly_balance_display","N/A")],
             ["Total Credits",           bank_data.get("total_credits_display","N/A")],
             ["Total Debits",            bank_data.get("total_debits_display","N/A")],
-            ["Inflow / Outflow Ratio",  str(bank_data.get("inflow_outflow_ratio","N/A"))+"x"],
+            ["Inflow / Outflow Ratio",  bank_data.get("inflow_outflow_display", "N/A")],
             ["OD Utilisation %",        str(bank_data.get("od_utilisation_pct",0))+"%"],
             ["Bounce / Return Count",   str(bank_data.get("bounce_count",0))],
             ["Transactions Scanned",    str(bank_data.get("transaction_count",0))],
@@ -239,7 +261,7 @@ def generate_cam(company, financials, research, analysis, bank_data=None, mca_da
         for p in bank_data.get("bank_positive",[]): E.append(Paragraph(f"✓  {p}", s["pos"]))
         E.append(Paragraph(f"Score penalty: {bank_data.get('bank_score_penalty',0)} pts | {bank_data.get('extraction_note','N/A')}", s["small"]))
     else:
-        E.append(Paragraph(f"Bank statement not provided: {(bank_data or {}).get('error','Not uploaded.')}", s["body"]))
+        E.append(Paragraph(f"Bank statement: {(bank_data or {}).get('error','Not uploaded / not provided.')}", s["body"]))
 
     # ── 8. MCA ───────────────────────────────────────────────────────────────
     E.append(Paragraph("8. MCA / ROC Company Registry Data", s["h2"]))
@@ -268,24 +290,30 @@ def generate_cam(company, financials, research, analysis, bank_data=None, mca_da
     for item in (analysis.get("detailed_narrative",[]) or ["No significant risk items."]):
         E.append(Paragraph(f"•  {item}", s["body"]))
 
-    # ── 10. Final Recommendation ──────────────────────────────────────────────
+    # ── 10. Sanction Covenants & Recommendation ───────────────────────────────
     E.append(Spacer(1, 0.1*inch))
     E.append(HRFlowable(width="100%", thickness=1, color=NAVY))
-    E.append(Paragraph("10. Final Recommendation", s["h2"]))
+    E.append(Paragraph("10. Final Underwriting Recommendation & Covenants", s["h2"]))
     E.append(Paragraph(
-        f"Based on AI + ML credit assessment (score: <b>{score}/100</b>), "
-        f"Intelli-Credit recommends to <b>{analysis.get('decision','N/A')}</b> "
-        f"the proposed facility. Indicative exposure: <b>{analysis.get('loan_amount','N/A')}</b> "
-        f"at <b>{analysis.get('interest_rate','N/A')}</b>.", s["body"]))
+        f"Based on calibrated AI + ML credit risk appraisal (Base: <b>{base_score}/100</b>, "
+        f"ML Calibrated: <b>{score}/100</b>), Intelli-Credit recommends: "
+        f"<b>{analysis.get('decision','N/A')}</b>. Indicative facility exposure: <b>{analysis.get('loan_amount','N/A')}</b> "
+        f"at benchmark pricing of <b>{analysis.get('interest_rate','N/A')}</b>.", s["body"]))
+
+    if covenants:
+        E.append(Paragraph("<b>Mandatory Sanction Covenants & Pre-Disbursement Conditions:</b>", s["body"]))
+        for cov in covenants:
+            E.append(Paragraph(f"• <b>[COVENANT]</b> {cov}", s["flag"]))
+
     if ml and ml.get("ml_grade"):
         E.append(Paragraph(
-            f"Machine Learning: <b>XGBoost Classifier (97.92% Prediction Accuracy)</b> — Grade: {ml.get('ml_grade')}, "
+            f"Machine Learning Overlay: <b>XGBoost 2.0 (97.92% Accuracy)</b> — Grade: {ml.get('ml_grade')}, "
             f"Reject probability: {ml.get('ml_reject_probability',0)*100:.1f}%. "
             f"Pipeline: pdfplumber + Tesseract OCR. Storage: MongoDB.", s["body"]))
     E.append(Spacer(1, 0.06*inch))
     E.append(Paragraph(
         "This report is system-generated and assists, but does not replace, human credit judgment. "
-        "Final approval authority rests with the sanctioning committee.", s["disc"]))
+        "Final approval authority rests with the institutional credit committee.", s["disc"]))
 
     doc.build(E)
     return f"{safe}_CAM_Report.pdf"

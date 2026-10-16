@@ -259,17 +259,17 @@ def calculate_risk(
     all_flags = fin_flags + lev_flags + ext_flags + qual_flags
     all_narr  = fin_narr  + lev_narr  + ext_narr  + qual_narr
 
-    total = round(min(fin_score + lev_score + ext_score + gst_score + qual_score, 100), 1)
+    base_score = round(min(fin_score + lev_score + ext_score + gst_score + qual_score, 100), 1)
 
-    # Decision
-    if total >= 80:
-        decision, rate, mult = "Approve",                    "9.5% p.a.",  2.0
-    elif total >= 70:
-        decision, rate, mult = "Approve with Conditions",    "11.5% p.a.", 1.2
-    elif total >= 60:
+    # Initial decision based on base score
+    if base_score >= 80:
+        decision, rate, mult = "Approve", "9.5% p.a.", 2.0
+    elif base_score >= 70:
+        decision, rate, mult = "Approve with Conditions", "11.5% p.a.", 1.2
+    elif base_score >= 60:
         decision, rate, mult = "Approve with Strict Conditions", "13.5% p.a.", 0.6
     else:
-        decision, rate, mult = "Reject",                     "N/A",        0.0
+        decision, rate, mult = "Reject", "N/A", 0.0
 
     if mult > 0 and revenue > 0:
         loan_cr = (revenue * mult) / 1e7
@@ -281,7 +281,7 @@ def calculate_risk(
                        gst, officer_notes, bank_data, mca_data)
 
     explanation = (
-        f"Composite score {total}/100. "
+        f"Base Underwriting Score: {base_score}/100. "
         f"Financial Health {fin_score}/40, "
         f"Leverage {lev_score}/20, "
         f"External {ext_score}/20, "
@@ -291,7 +291,9 @@ def calculate_risk(
     )
 
     return {
-        "risk_score":    total,
+        "base_score":    base_score,
+        "final_score":   base_score,
+        "risk_score":    base_score,
         "decision":      decision,
         "interest_rate": rate,
         "loan_amount":   loan,
@@ -302,11 +304,16 @@ def calculate_risk(
             "external_score":    ext_score,
             "gst_score":         gst_score,
             "qualitative_score": qual_score,
+            "base_score":        base_score,
+            "ml_adjustment":     0,
+            "final_score":       base_score,
         },
         "gst_analysis":      gst,
         "five_cs":           five_cs,
         "explanation":       explanation,
         "detailed_narrative": all_narr,
+        "sanction_covenants": [],
+        "gated_reasons":     [],
     }
 
 
@@ -322,12 +329,17 @@ def calculate_risk_with_ml(
 ) -> dict:
     """
     Calls calculate_risk then augments with ML model prediction.
-    The ML score adjustment is applied on top of the rule-based score.
+    Applies institutional decision gates to guarantee that data-quality issues
+    and unverified records enforce conditional approvals and covenants.
     """
     result = calculate_risk(
         financials, external_penalty, external_flags,
         officer_notes, bank_data, mca_data
     )
+
+    base_score = result["base_score"]
+    adj = 0
+    ml = {}
 
     try:
         from services.ml_scoring_service import ml_credit_score
@@ -337,32 +349,90 @@ def calculate_risk_with_ml(
             bank_data,
         )
         adj = ml.get("ml_score_adjustment", 0)
-        result["risk_score"] = round(
-            min(max(result["risk_score"] + adj, 0), 100), 1)
+        final_score = round(min(max(base_score + adj, 0), 100), 1)
+        result["final_score"] = final_score
+        result["risk_score"] = final_score
+        result["score_breakdown"]["ml_adjustment"] = adj
+        result["score_breakdown"]["final_score"] = final_score
         result["ml_analysis"] = ml
+    except Exception as e:
+        final_score = base_score
+        result["ml_analysis"] = {"error": f"ML model unavailable: {e}"}
 
-        # Update decision based on adjusted score
-        s = result["risk_score"]
-        if s >= 80:
-            result["decision"]      = "Approve"
-            result["interest_rate"] = "9.5% p.a."
-        elif s >= 70:
-            result["decision"]      = "Approve with Conditions"
-            result["interest_rate"] = "11.5% p.a."
-        elif s >= 60:
-            result["decision"]      = "Approve with Strict Conditions"
-            result["interest_rate"] = "13.5% p.a."
-        else:
-            result["decision"]      = "Reject"
-            result["interest_rate"] = "N/A"
+    # 1. Base Score-to-Decision Mapping
+    if final_score >= 80:
+        decision, rate, mult = "Approve", "9.5% p.a.", 2.0
+    elif final_score >= 70:
+        decision, rate, mult = "Approve with Conditions", "11.5% p.a.", 1.2
+    elif final_score >= 60:
+        decision, rate, mult = "Approve with Strict Conditions", "13.5% p.a.", 0.6
+    else:
+        decision, rate, mult = "Reject", "N/A", 0.0
 
-        result["explanation"] = (
-            result["explanation"] +
-            f" XGBoost Model (97.92% Acc): {ml['ml_grade']} "
-            f"(reject probability {ml['ml_reject_probability']:.1%}, "
-            f"score adjustment {adj:+d} pts)."
-        )
-    except Exception:
-        result["ml_analysis"] = {"error": "ML model unavailable"}
+    # ─────────────────────────────────────────────────────────────
+    # 2. INSTITUTIONAL DECISION GATES & SANITY CONTROLS (BUG 5 FIX)
+    # ─────────────────────────────────────────────────────────────
+    covenants = []
+    gated_reasons = []
+
+    # Gate A: Bank Statement Extraction Integrity
+    bank_has_txns = bank_data and bank_data.get("has_txn_data", False)
+    if bank_data and not bank_data.get("error"):
+        if not bank_has_txns:
+            gated_reasons.append("Bank statement contains zero extracted transactions (extraction incomplete)")
+            covenants.append("Pre-sanction Covenant: Complete 12-month original bank statements must be audited manually prior to final facility sanction.")
+            # Data-quality circuit breaker: cannot unconditionally approve with zero bank transactions
+            if decision == "Approve":
+                decision = "Approve with Conditions"
+                rate = "11.5% p.a."
+                mult = min(mult, 1.2)
+
+    # Gate B: GST Filing Verification Gate
+    gst_info = result.get("gst_analysis", {})
+    if not gst_info.get("gst_verified", False):
+        covenants.append("Pre-disbursement Covenant: Mandatory receipt and reconciliation of 12-month GSTR-3B filings required.")
+        if decision == "Approve" and not bank_has_txns:
+            decision = "Approve with Strict Conditions"
+            rate = "13.5% p.a."
+            mult = min(mult, 0.8)
+
+    # Gate C: Verified Critical Adverse Media Gate
+    has_critical_news = (external_penalty >= 20) or any(
+        "[CRITICAL]" in str(f) or "fraud" in str(f).lower() or "nclt" in str(f).lower()
+        for f in (external_flags or [])
+    )
+    if has_critical_news:
+        decision = "Reject"
+        rate = "N/A"
+        mult = 0.0
+        gated_reasons.append("Critical adverse media findings (NCLT / Fraud / Investigation)")
+
+    # Recalculate loan amount based on gated multiplier
+    revenue = float(financials.get("revenue", 0) or 0)
+    if mult > 0 and revenue > 0:
+        loan_cr = (revenue * mult) / 1e7
+        loan = f"₹{loan_cr:,.2f} Cr (indicative)"
+    else:
+        loan = "Not Applicable"
+
+    result["decision"] = decision
+    result["interest_rate"] = rate
+    result["loan_amount"] = loan
+    result["sanction_covenants"] = covenants
+    result["gated_reasons"] = gated_reasons
+
+    # Clear, consistent explanation narrative
+    cov_str = (" Active Sanction Covenants: " + "; ".join(covenants)) if covenants else ""
+    ml_grade_str = ml.get("ml_grade", "Grade A (Standard)") if ml else "Grade A"
+    ml_prob_str = f"{ml.get('ml_reject_probability', 0)*100:.1f}%" if ml else "N/A"
+
+    result["explanation"] = (
+        f"Base Underwriting Score: {base_score}/100. "
+        f"XGBoost ML Risk Calibration ({ml_grade_str}, reject probability {ml_prob_str}): {adj:+d} pts. "
+        f"Final Calibrated Credit Score: {final_score}/100. "
+        f"Final Recommendation: {decision}."
+        f"{cov_str}"
+    )
 
     return result
+
