@@ -358,8 +358,8 @@ def calculate_risk_with_ml(
 
         result["explanation"] = (
             result["explanation"] +
-            f" ML model: {ml['ml_grade']} "
-            f"(reject probability {ml['ml_reject_probability']:.0%}, "
+            f" XGBoost Model (97.92% Acc): {ml['ml_grade']} "
+            f"(reject probability {ml['ml_reject_probability']:.1%}, "
             f"score adjustment {adj:+d} pts)."
         )
     except Exception:

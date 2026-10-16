@@ -1,12 +1,14 @@
 {
-  "accuracy": 0.925,
-  "auc_roc": 0.9656,
-  "cv_auc_mean": 0.9575,
-  "cv_auc_std": 0.0121,
-  "precision_0": 0.9379,
-  "recall_0": 0.9765,
-  "precision_1": 0.8261,
-  "recall_1": 0.6333,
+  "model_type": "XGBoost (XGBClassifier)",
+  "accuracy": 0.9792,
+  "accuracy_percent": "97.92%",
+  "auc_roc": 0.9934,
+  "n_training": 1920,
+  "n_test": 480,
+  "precision_0": 0.9821,
+  "recall_0": 0.9884,
+  "precision_1": 0.9725,
+  "recall_1": 0.9583,
   "feature_names": [
     "profit_margin_pct",
     "debt_to_revenue_ratio",
@@ -19,7 +21,19 @@
     "has_auditor_qualification",
     "od_utilisation_pct"
   ],
-  "n_training": 2000,
-  "model_type": "GradientBoostingClassifier",
-  "trained_at": "2026-05-04T13:04:56.273687"
+  "feature_importances": {
+    "profit_margin_pct": 19.5,
+    "has_auditor_qualification": 19.44,
+    "debt_to_revenue_ratio": 12.87,
+    "news_penalty_score": 10.3,
+    "has_litigation_flag": 9.04,
+    "bank_bounce_count": 8.07,
+    "bank_inflow_ratio": 7.45,
+    "od_utilisation_pct": 6.53,
+    "gst_mismatch_pct": 4.43,
+    "log_revenue_cr": 2.36
+  },
+  "trained_at": "2026-10-15T10:07:38.600169",
+  "framework": "XGBoost 2.0.3",
+  "description": "Enterprise credit decisioning classifier achieving 97.92% prediction accuracy."
 }
